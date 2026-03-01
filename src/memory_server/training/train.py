@@ -1,0 +1,120 @@
+"""Training entry point — platform dispatch.
+
+This module is invoked as a subprocess by the memory server:
+    uv run python -m memory_server.training.train --agent-id avery
+
+It selects the appropriate training backend (MLX on macOS, unsloth on Linux)
+and runs the full pipeline: data prep → train → convert to GGUF.
+"""
+
+import argparse
+import asyncio
+import json
+import logging
+import platform
+import sys
+from pathlib import Path
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("memory-server.training")
+
+
+def _write_status(status_path: Path, status: str, **extra: object) -> None:
+    """Write training status to a JSON file for the server to poll."""
+    data = {"status": status, **extra}
+    status_path.write_text(json.dumps(data))
+
+
+async def run_training_pipeline(
+    agent_id: str,
+    server_url: str = "http://localhost:2090",
+    max_iters: int = 200,
+    lora_rank: int = 8,
+    batch_size: int = 1,
+) -> None:
+    """Full training pipeline: data prep → train → convert."""
+    from ..config import settings
+
+    agent_dir = settings.data_dir / agent_id
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    status_path = agent_dir / "training_status.json"
+
+    try:
+        # Step 1: Data preparation
+        _write_status(status_path, "preparing")
+        logger.info(f"Step 1/3: Preparing training data for agent '{agent_id}'")
+
+        from .data_prep import prepare_training_data
+        data_path = await prepare_training_data(agent_id, server_url=server_url)
+
+        # Count training pairs
+        with open(data_path) as f:
+            pair_count = sum(1 for _ in f)
+        logger.info(f"  Generated {pair_count} training pairs")
+
+        if pair_count < 10:
+            _write_status(status_path, "failed", error="Too few training pairs generated")
+            logger.error("Too few training pairs — need at least 10")
+            return
+
+        # Step 2: Train
+        _write_status(status_path, "training")
+        logger.info(f"Step 2/3: Training LoRA adapter ({platform.system()})")
+
+        if platform.system() == "Darwin":
+            from .train_mlx import run_training
+        else:
+            from .train_unsloth import run_training
+
+        adapter_dir = agent_dir / "adapter_raw"
+        adapter_dir.mkdir(parents=True, exist_ok=True)
+
+        run_training(
+            data_path=data_path,
+            output_dir=adapter_dir,
+            max_iters=max_iters,
+            lora_rank=lora_rank,
+            batch_size=batch_size,
+        )
+
+        # Step 3: Convert to GGUF
+        _write_status(status_path, "converting")
+        logger.info("Step 3/3: Converting adapter to GGUF format")
+
+        from .convert import convert_to_gguf
+        gguf_path = agent_dir / "adapter.gguf"
+        convert_to_gguf(
+            adapter_dir=adapter_dir,
+            output_path=gguf_path,
+            source_platform="mlx" if platform.system() == "Darwin" else "hf",
+        )
+
+        _write_status(status_path, "complete")
+        logger.info(f"Training complete. Adapter at: {gguf_path}")
+
+    except Exception as e:
+        _write_status(status_path, "failed", error=str(e))
+        logger.exception(f"Training failed for agent '{agent_id}'")
+        raise
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Train a LoRA adapter for an agent")
+    parser.add_argument("--agent-id", required=True, help="Agent identifier")
+    parser.add_argument("--server-url", default="http://localhost:2090", help="Memory server URL")
+    parser.add_argument("--max-iters", type=int, default=200, help="Max training iterations")
+    parser.add_argument("--lora-rank", type=int, default=8, help="LoRA rank")
+    parser.add_argument("--batch-size", type=int, default=1, help="Training batch size")
+    args = parser.parse_args()
+
+    asyncio.run(run_training_pipeline(
+        agent_id=args.agent_id,
+        server_url=args.server_url,
+        max_iters=args.max_iters,
+        lora_rank=args.lora_rank,
+        batch_size=args.batch_size,
+    ))
+
+
+if __name__ == "__main__":
+    main()
