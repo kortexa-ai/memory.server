@@ -21,12 +21,17 @@ def run_training(
     output_dir: Path,
     max_iters: int = 200,
     lora_rank: int = 8,
+    num_layers: int = 16,
     batch_size: int = 1,
 ) -> None:
     """Run QLoRA training using mlx-lm.
 
     mlx-lm expects training data as a directory containing train.jsonl (and optionally
     valid.jsonl). Each line is: {"messages": [{"role": "user", ...}, {"role": "assistant", ...}]}
+
+    Args:
+        lora_rank: LoRA rank (r parameter). Higher = more capacity but more memory.
+        num_layers: Number of layers to apply LoRA to (from the top). -1 for all.
     """
     # mlx-lm wants a directory with train.jsonl
     train_dir = output_dir / "data"
@@ -45,7 +50,7 @@ def run_training(
     logger.info(f"  Model: {model_name}")
     logger.info(f"  Data: {data_path}")
     logger.info(f"  Output: {output_dir}")
-    logger.info(f"  Iterations: {max_iters}, Rank: {lora_rank}, Batch: {batch_size}")
+    logger.info(f"  Iterations: {max_iters}, Rank: {lora_rank}, Layers: {num_layers}, Batch: {batch_size}")
 
     cmd = [
         sys.executable, "-m", "mlx_lm", "lora",
@@ -54,8 +59,10 @@ def run_training(
         "--data", str(train_dir),
         "--adapter-path", str(output_dir),
         "--batch-size", str(batch_size),
-        "--num-layers", str(lora_rank),
+        "--num-layers", str(num_layers),
         "--iters", str(max_iters),
+        "--mask-prompt",
+        "--grad-checkpoint",
     ]
 
     logger.info(f"Running: {' '.join(cmd)}")

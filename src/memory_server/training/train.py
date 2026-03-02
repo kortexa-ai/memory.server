@@ -30,6 +30,7 @@ async def run_training_pipeline(
     server_url: str = "http://localhost:2090",
     max_iters: int = 200,
     lora_rank: int = 8,
+    num_layers: int = 16,
     batch_size: int = 1,
 ) -> None:
     """Full training pipeline: data prep → train → convert."""
@@ -74,6 +75,7 @@ async def run_training_pipeline(
             output_dir=adapter_dir,
             max_iters=max_iters,
             lora_rank=lora_rank,
+            num_layers=num_layers,
             batch_size=batch_size,
         )
 
@@ -104,6 +106,7 @@ def main() -> None:
     parser.add_argument("--server-url", default="http://localhost:2090", help="Memory server URL")
     parser.add_argument("--max-iters", type=int, default=200, help="Max training iterations")
     parser.add_argument("--lora-rank", type=int, default=8, help="LoRA rank")
+    parser.add_argument("--num-layers", type=int, default=16, help="Number of layers to apply LoRA to (-1 for all)")
     parser.add_argument("--batch-size", type=int, default=1, help="Training batch size")
     args = parser.parse_args()
 
@@ -112,6 +115,7 @@ def main() -> None:
         server_url=args.server_url,
         max_iters=args.max_iters,
         lora_rank=args.lora_rank,
+        num_layers=args.num_layers,
         batch_size=args.batch_size,
     ))
 
