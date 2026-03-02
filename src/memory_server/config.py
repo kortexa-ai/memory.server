@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     embedding_batch_size: int = 64
 
     # Training settings (Phase 3)
+    training_model_repo: str = "NexVeridian/Qwen3.5-35B-A3B-4bit"  # 4-bit text-only MLX model (~19.5GB, converted with mlx-lm)
     training_min_memories: int = 100  # Minimum memories before training is allowed
     training_max_iters: int = 200
     training_lora_rank: int = 8

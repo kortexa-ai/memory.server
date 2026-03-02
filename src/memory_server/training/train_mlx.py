@@ -38,10 +38,8 @@ def run_training(
         train_jsonl.unlink()
     train_jsonl.symlink_to(data_path.resolve())
 
-    # Model to fine-tune — use the same model the server runs
-    model_name = settings.engine_hf_repo.replace("-GGUF", "")
-    # For training we need the original weights, not GGUF
-    # The HF repo for original weights is typically the same name without the GGUF suffix
+    # Model to fine-tune — original weights (not GGUF) for MLX training
+    model_name = settings.training_model_repo
 
     logger.info(f"Starting MLX LoRA training:")
     logger.info(f"  Model: {model_name}")
@@ -50,13 +48,13 @@ def run_training(
     logger.info(f"  Iterations: {max_iters}, Rank: {lora_rank}, Batch: {batch_size}")
 
     cmd = [
-        sys.executable, "-m", "mlx_lm.lora",
+        sys.executable, "-m", "mlx_lm", "lora",
         "--model", model_name,
         "--train",
         "--data", str(train_dir),
         "--adapter-path", str(output_dir),
         "--batch-size", str(batch_size),
-        "--lora-layers", str(lora_rank),  # mlx-lm uses --lora-layers for the number of LoRA layers
+        "--num-layers", str(lora_rank),
         "--iters", str(max_iters),
     ]
 

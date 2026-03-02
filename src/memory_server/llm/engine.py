@@ -127,11 +127,14 @@ class MemoryEngine:
                 "messages": messages,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
+                # Disable Qwen 3.5 thinking mode — we want direct answers
+                "chat_template_kwargs": {"enable_thinking": False},
             },
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"] or ""
+        msg = data["choices"][0]["message"]
+        return msg.get("content") or msg.get("reasoning_content") or ""
 
     @property
     def loaded(self) -> bool:

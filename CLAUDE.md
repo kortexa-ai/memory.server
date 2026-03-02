@@ -198,18 +198,51 @@ The `agent_id` is an opaque string namespace. Any agent that can make HTTP calls
 
 ## LoRA Adapter Flow
 
-Per-agent LoRA adapters live at `data/agents/{agent_id}/adapter.gguf`. When an agent calls `/v1/memory/recall`, the engine tells llama-server to load the adapter via its `/lora-adapters` API before running inference.
+Per-agent LoRA adapters live at `data/agents/{agent_id}/adapter.gguf`.
+
+### Loading adapters into llama-server
+
+**Important:** llama-server cannot load LoRA adapters dynamically from disk at runtime. Adapters must be specified at startup via the `--lora` flag. The `/lora-adapters` API only toggles which *already-loaded* adapters are active and at what scale.
+
+To run llama-server with LoRA support:
+
+```bash
+llama-server \
+  -hf unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q4_K_XL \
+  --host 0.0.0.0 --port 2027 \
+  --jinja -ngl 99 --threads -1 \
+  --flash-attn on \
+  --cache-type-k q4_0 --cache-type-v q4_0 \
+  --lora data/agents/my-agent/adapter.gguf \
+  --lora-init-without-apply
+```
+
+The `--lora-init-without-apply` flag loads the adapter into GPU memory without activating it. The memory server then toggles it on/off per-request:
+
+```bash
+# Enable adapter (scale 1.0)
+curl -X POST http://localhost:2027/lora-adapters \
+  -H "Content-Type: application/json" \
+  -d '[{"id": 0, "scale": 1.0}]'
+
+# Disable adapter
+curl -X POST http://localhost:2027/lora-adapters \
+  -H "Content-Type: application/json" \
+  -d '[]'
+```
+
+**Note:** The `id` field must be a number (not a string). Multiple adapters can be loaded at startup and switched between at runtime. After training a new adapter, llama-server must be restarted to pick it up.
 
 ### Training LoRA adapters (Phase 3)
 
 Trigger via `POST /v1/memory/train/{agent_id}`. The training pipeline runs as a subprocess:
 
 1. Collect accumulated memories for the agent from SQLite
-2. Generate Q&A training pairs using the LLM (via `/v1/internal/generate`)
+2. Generate Q&A training pairs using the LLM (batched, concurrent)
 3. Fine-tune a LoRA adapter: MLX on macOS, unsloth on Linux
-4. Convert to GGUF format (`~/src/llama.cpp/convert_lora_to_gguf.py`)
+4. Convert to GGUF format (direct conversion via gguf-py, bypasses llama.cpp's broken `convert_lora_to_gguf.py` which doesn't support Qwen3.5 MoE LoRA yet)
 5. Place at `data/agents/{agent_id}/adapter.gguf`
-6. Next recall request automatically loads it via llama-server
+6. **Restart llama-server** with the new `--lora` flag to load it
 
 ## Development Phases
 

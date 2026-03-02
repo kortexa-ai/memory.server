@@ -92,5 +92,30 @@ def run():
     )
 
 
+def ensure_adapter():
+    """Ensure a GGUF LoRA adapter exists at the given path, creating a null one if needed.
+
+    Usage: memory-ensure-adapter data/agents/francip/adapter.gguf
+    Called by llama-server run scripts before startup so --lora always has a valid file.
+    """
+    import sys as _sys
+
+    if len(_sys.argv) < 2:
+        print("Usage: memory-ensure-adapter <path-to-adapter.gguf>")
+        _sys.exit(1)
+
+    from pathlib import Path
+
+    path = Path(_sys.argv[1])
+    if path.exists():
+        print(f"Adapter exists: {path} ({path.stat().st_size} bytes)")
+        return
+
+    from .training.convert import create_null_adapter
+
+    create_null_adapter(path)
+    print(f"Created null adapter: {path} ({path.stat().st_size} bytes)")
+
+
 if __name__ == "__main__":
     run()

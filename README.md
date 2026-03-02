@@ -38,7 +38,7 @@ Any agent that speaks HTTP can use it. The `agent_id` is an opaque string — ea
 
 ### 1. Start llama-server
 
-The memory server needs a running llama-server for LLM inference.
+The memory server needs a running llama-server for LLM inference. To enable LoRA adapter support, start with `--lora` and `--lora-init-without-apply` flags (see [LoRA adapters](#lora-adapters) below).
 
 **macOS (Metal):**
 
@@ -48,7 +48,8 @@ llama-server \
   --host 0.0.0.0 --port 2027 \
   --jinja -ngl 99 --threads -1 \
   --flash-attn on \
-  --cache-type-k q4_0 --cache-type-v q4_0
+  --cache-type-k q4_0 --cache-type-v q4_0 \
+  --lora data/agents/my-agent/adapter.gguf --lora-init-without-apply
 ```
 
 **Linux (NVIDIA):**
@@ -59,7 +60,8 @@ llama-server \
   --host 0.0.0.0 --port 2027 \
   --jinja -ngl 99 --threads -1 \
   --flash-attn on \
-  --cache-type-k q8_0 --cache-type-v q8_0
+  --cache-type-k q8_0 --cache-type-v q8_0 \
+  --lora data/agents/my-agent/adapter.gguf --lora-init-without-apply
 ```
 
 First run downloads the model (~20GB, cached in `~/.cache/llama.cpp/`).
@@ -134,7 +136,7 @@ Once an agent has accumulated enough memories (default: 100+), you can train a p
 curl -X POST http://localhost:2090/v1/memory/train/my-agent
 ```
 
-Training runs as a background subprocess (MLX on macOS, unsloth on Linux). The resulting adapter is automatically picked up on the next recall request — no server restart needed.
+Training runs as a background subprocess (MLX on macOS, unsloth on Linux). After training completes, restart llama-server to load the new adapter (see [LoRA adapters](#lora-adapters) below).
 
 ## Configuration
 
@@ -166,14 +168,43 @@ This separation gives us:
 2. **Recall**: query → embedding → cosine similarity over all agent memories → top-k → LLM synthesis
 3. **Ingest**: transcript → LLM extracts facts → each fact stored + embedded
 
+### LoRA adapters
+
+llama-server **cannot** load LoRA adapters dynamically from disk at runtime. Adapters must be specified at startup with `--lora`. The API only toggles adapters on/off — it can't add new ones.
+
+This means:
+
+- The `--lora path.gguf` file must exist before llama-server starts
+- `--lora-init-without-apply` loads the adapter but doesn't activate it (scale=0), so the memory server can enable it per-request
+- After training a new adapter, llama-server must be restarted to pick it up
+
+**Null adapters:** If no real adapter exists yet, use `memory-ensure-adapter` to create a 192-byte no-op GGUF file. This lets llama-server start with `--lora` before any training has happened — the null adapter loads zero tensors and has zero effect on inference.
+
+```bash
+# Creates a null adapter only if the file doesn't exist; no-op if it does
+cd ~/src/memory.server
+uv run memory-ensure-adapter data/agents/my-agent/adapter.gguf
+```
+
+**Enabling/disabling via API:**
+
+```bash
+# Enable adapter (id is 0-indexed order of --lora flags)
+curl -X POST http://localhost:2027/lora-adapters \
+  -d '[{"id": 0, "scale": 1.0}]'
+
+# Disable all adapters
+curl -X POST http://localhost:2027/lora-adapters -d '[]'
+```
+
 ### LoRA training pipeline
 
 1. Read accumulated memories from SQLite
 2. Generate Q&A training pairs via the LLM
 3. Fine-tune QLoRA adapter (MLX on macOS, unsloth on Linux)
-4. Convert to GGUF format
+4. Convert to GGUF format (direct gguf-py conversion, bypasses llama.cpp's converter which can't handle Qwen3.5 MoE)
 5. Place at `data/agents/{agent_id}/adapter.gguf`
-6. llama-server loads it on next recall — no restart
+6. Restart llama-server to load the new adapter
 
 ## Roadmap
 
