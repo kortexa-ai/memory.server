@@ -1,9 +1,9 @@
 """MLX LoRA training backend (macOS Apple Silicon).
 
 Uses mlx-lm for QLoRA fine-tuning on Qwen 3.5 35B A3B.
-Outputs adapter in MLX format (adapters.safetensors) — needs conversion to GGUF after.
+Outputs adapter in MLX format (adapters.safetensors) — loaded directly by mlx-lm server per-request.
 
-Requires: pip install mlx-lm (or uv sync --extra train-mac)
+Requires: mlx-lm (included in core deps)
 """
 
 import logging
@@ -43,8 +43,8 @@ def run_training(
         train_jsonl.unlink()
     train_jsonl.symlink_to(data_path.resolve())
 
-    # Model to fine-tune — original weights (not GGUF) for MLX training
-    model_name = settings.training_model_repo
+    # Model to fine-tune — same model used for inference
+    model_name = settings.model_repo
 
     logger.info(f"Starting MLX LoRA training:")
     logger.info(f"  Model: {model_name}")

@@ -1,17 +1,16 @@
-"""LLM engine — talks to llama-server via OpenAI-compatible HTTP API.
+"""LLM engine — launches and talks to mlx-lm server for inference.
 
-The memory server does NOT load the model in-process. Instead it connects to
-a llama-server instance (which we also own/control) that handles model loading,
-GPU offload, KV cache, and LoRA adapter management.
-
-This gives us:
-- Latest llama.cpp features (qwen35moe, etc.) without waiting for Python bindings
-- Proper continuous batching and KV cache management
-- LoRA swapping via llama-server's API
-- Separation of concerns: memory server = brain, llama-server = muscle
+The memory server owns the mlx-lm server process (launched as a subprocess).
+mlx-lm provides:
+- OpenAI-compatible chat completions API
+- Per-request LoRA adapter loading via "adapters" field
+- No restart needed after training — new adapter picked up immediately
 """
 
+import asyncio
 import logging
+import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -25,87 +24,86 @@ _engine: "MemoryEngine | None" = None
 
 
 class MemoryEngine:
-    """LLM engine that connects to llama-server."""
+    """LLM engine that launches and connects to mlx-lm server."""
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
-        self._active_agent: str | None = None
+        self._process: subprocess.Popen | None = None
         self._healthy: bool = False
 
+    @property
+    def _base_url(self) -> str:
+        return f"http://localhost:{settings.model_server_port}"
+
     async def connect(self) -> None:
-        """Connect to llama-server and verify it's running."""
+        """Launch mlx-lm server as subprocess and wait for it to be ready."""
+        # Start the mlx-lm server
+        cmd = [
+            sys.executable, "-m", "mlx_lm.server",
+            "--model", settings.model_repo,
+            "--host", settings.host,
+            "--port", str(settings.model_server_port),
+        ]
+
+        logger.info(f"Launching mlx-lm server: {' '.join(cmd)}")
+        self._process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
         self._client = httpx.AsyncClient(
-            base_url=settings.engine_server_url,
+            base_url=self._base_url,
             timeout=httpx.Timeout(120.0, connect=10.0),
         )
-        try:
-            resp = await self._client.get("/health")
-            resp.raise_for_status()
-            health = resp.json()
-            self._healthy = True
-            logger.info(f"Connected to llama-server at {settings.engine_server_url}")
-            logger.info(f"  Server health: {health}")
-        except httpx.ConnectError:
-            logger.warning(
-                f"llama-server not reachable at {settings.engine_server_url}. "
-                f"Start it with: llama-server -hf unsloth/Qwen3.5-35B-A3B-GGUF:UD-Q4_K_XL --port {settings.engine_server_port}"
-            )
-            # Don't fail — server might come up later
-            self._healthy = False
+
+        # Wait for server to become healthy (model loading takes a while)
+        for attempt in range(120):  # up to 2 minutes
+            # Check if process died
+            if self._process.poll() is not None:
+                stderr = self._process.stderr.read().decode() if self._process.stderr else ""
+                logger.error(f"mlx-lm server exited with code {self._process.returncode}: {stderr}")
+                self._healthy = False
+                return
+
+            try:
+                resp = await self._client.get("/v1/models")
+                resp.raise_for_status()
+                self._healthy = True
+                logger.info(f"mlx-lm server ready on port {settings.model_server_port}")
+                return
+            except (httpx.ConnectError, httpx.HTTPStatusError):
+                await asyncio.sleep(1)
+
+        logger.warning("mlx-lm server did not become ready within 2 minutes")
+        self._healthy = False
 
     async def disconnect(self) -> None:
-        """Close the HTTP client."""
+        """Shut down the mlx-lm server and close the HTTP client."""
         if self._client:
             await self._client.aclose()
             self._client = None
 
-    def get_adapter_path(self, agent_id: str) -> Path | None:
-        """Get LoRA adapter path for an agent, or None if it doesn't exist."""
-        adapter_path = settings.data_dir / agent_id / "adapter.gguf"
-        return adapter_path if adapter_path.exists() else None
+        if self._process and self._process.poll() is None:
+            logger.info("Shutting down mlx-lm server...")
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait()
+            logger.info("mlx-lm server stopped")
+        self._process = None
 
-    # --- LoRA adapter management (Phase 3) ---
-    # llama-server supports LoRA via --lora flag at startup and
-    # via the /lora-adapters endpoint for dynamic swapping.
-    # For now, LoRA swapping is a TODO — the server needs to be started
-    # with --lora pointing to the adapter file, or we use the API.
+    def get_adapter_path(self, agent_id: str) -> str | None:
+        """Get LoRA adapter directory for an agent, or None if not trained.
 
-    async def swap_adapter(self, agent_id: str | None) -> None:
-        """Swap to a different agent's LoRA adapter via llama-server API.
-
-        llama-server exposes POST /lora-adapters for dynamic LoRA management.
+        Returns the path to the adapter_raw directory containing adapters.safetensors,
+        which mlx-lm can load directly per-request.
         """
-        if agent_id == self._active_agent:
-            return
-
-        if not self._client:
-            return
-
-        adapter_path = self.get_adapter_path(agent_id) if agent_id else None
-
-        if adapter_path is None:
-            # Clear any active adapter
-            if self._active_agent is not None:
-                try:
-                    await self._client.post("/lora-adapters", json=[])
-                    self._active_agent = None
-                    logger.info("Cleared LoRA adapter (base model)")
-                except httpx.HTTPError as e:
-                    logger.warning(f"Failed to clear LoRA adapter: {e}")
-            return
-
-        # Set the adapter
-        try:
-            await self._client.post(
-                "/lora-adapters",
-                json=[{"path": str(adapter_path), "scale": 1.0}],
-            )
-            self._active_agent = agent_id
-            logger.info(f"Activated LoRA adapter for agent '{agent_id}'")
-        except httpx.HTTPError as e:
-            logger.warning(f"Failed to set LoRA adapter for agent '{agent_id}': {e}")
-
-    # --- Inference ---
+        adapter_dir = settings.data_dir / agent_id / "adapter"
+        adapter_file = adapter_dir / "adapters.safetensors"
+        return str(adapter_dir) if adapter_file.exists() else None
 
     async def chat(
         self,
@@ -114,27 +112,36 @@ class MemoryEngine:
         temperature: float = 0.3,
         agent_id: str | None = None,
     ) -> str:
-        """Run chat completion via llama-server's OpenAI-compatible API."""
+        """Run chat completion via mlx-lm server's OpenAI-compatible API."""
         if not self._client:
-            raise RuntimeError("Not connected to llama-server — call connect() first")
+            raise RuntimeError("Not connected to mlx-lm server — call connect() first")
 
-        # Swap adapter if needed
-        await self.swap_adapter(agent_id)
+        # Disable Qwen 3.5 thinking mode by appending /no_think to the last user message
+        # (mlx-lm server doesn't support chat_template_kwargs)
+        messages = [m.copy() for m in messages]
+        for m in reversed(messages):
+            if m["role"] == "user":
+                m["content"] += " /no_think"
+                break
 
-        resp = await self._client.post(
-            "/v1/chat/completions",
-            json={
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                # Disable Qwen 3.5 thinking mode — we want direct answers
-                "chat_template_kwargs": {"enable_thinking": False},
-            },
-        )
+        body: dict = {
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+
+        # Load agent's LoRA adapter if available
+        if agent_id:
+            adapter_path = self.get_adapter_path(agent_id)
+            if adapter_path:
+                body["adapters"] = adapter_path
+
+        resp = await self._client.post("/v1/chat/completions", json=body)
         resp.raise_for_status()
         data = resp.json()
         msg = data["choices"][0]["message"]
-        return msg.get("content") or msg.get("reasoning_content") or ""
+        # mlx-lm may return thinking in "reasoning" field
+        return msg.get("content") or msg.get("reasoning") or msg.get("reasoning_content") or ""
 
     @property
     def loaded(self) -> bool:
@@ -142,7 +149,8 @@ class MemoryEngine:
 
     @property
     def active_agent(self) -> str | None:
-        return self._active_agent
+        # No longer tracking active agent — adapters loaded per-request
+        return None
 
 
 def get_engine() -> MemoryEngine:

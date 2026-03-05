@@ -12,9 +12,9 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 2090
 
-    # LLM engine — connects to llama-server via HTTP
-    engine_server_url: str = "http://localhost:2027"
-    engine_server_port: int = 2027  # for display in help messages only
+    # LLM engine — mlx-lm server (launched as subprocess)
+    model_repo: str = "NexVeridian/Qwen3.5-35B-A3B-4bit"  # 4-bit text-only MLX model (~19.5GB)
+    model_server_port: int = 2091
 
     # Storage
     data_dir: Path = Path("data/agents")
@@ -33,13 +33,11 @@ class Settings(BaseSettings):
     embedding_batch_size: int = 64
 
     # Training settings (Phase 3)
-    training_model_repo: str = "NexVeridian/Qwen3.5-35B-A3B-4bit"  # 4-bit text-only MLX model (~19.5GB, converted with mlx-lm)
     training_min_memories: int = 100  # Minimum memories before training is allowed
     training_max_iters: int = 200
     training_lora_rank: int = 8
     training_batch_size: int = 1
     training_qa_pairs_per_memory: int = 5
-    llama_cpp_dir: Path = Path.home() / "src/llama.cpp"
 
     model_config = {"env_prefix": "MEMORY_", "env_file": ".env"}
 

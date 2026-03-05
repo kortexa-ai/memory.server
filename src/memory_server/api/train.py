@@ -78,7 +78,7 @@ async def training_status(agent_id: str) -> TrainStatus:
     """Check the status of a training job for an agent."""
     agent_dir = settings.data_dir / agent_id
     status_path = agent_dir / "training_status.json"
-    adapter_path = agent_dir / "adapter.gguf"
+    adapter_path = agent_dir / "adapter" / "adapters.safetensors"
 
     adapter_exists = adapter_path.exists()
     adapter_updated = (

@@ -1,6 +1,6 @@
 """LLM client for the memory server.
 
-Uses llama-server (Qwen 3.5 35B A3B) via the engine HTTP client for:
+Uses mlx-lm server (Qwen 3.5 35B A3B) via the engine HTTP client for:
 1. Recall synthesis — given retrieved memories + a query, produce a coherent answer
 2. Knowledge extraction — given a transcript, extract key facts as discrete memories
 """
@@ -17,8 +17,8 @@ async def synthesize_recall(
 ) -> str:
     """Given a query and retrieved memories, synthesize a coherent response.
 
-    If the agent has a LoRA adapter, the engine swaps it in before inference
-    for personalized synthesis. Otherwise uses the base model.
+    If the agent has a LoRA adapter, it's loaded per-request via mlx-lm's
+    adapters field. Otherwise uses the base model.
     """
     if not memories:
         return ""

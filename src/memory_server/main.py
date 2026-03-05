@@ -27,9 +27,9 @@ async def lifespan(app: FastAPI):
     get_embedder().warm_up()
     logger.info("Embedding model ready")
 
-    # Connect to llama-server
+    # Launch mlx-lm server
     engine = get_engine()
-    logger.info(f"Connecting to llama-server at {settings.engine_server_url}...")
+    logger.info(f"Launching mlx-lm server (model: {settings.model_repo}, port: {settings.model_server_port})...")
     await engine.connect()
 
     yield
@@ -58,7 +58,6 @@ async def health():
     return {
         "status": "ok",
         "engine_loaded": engine.loaded,
-        "active_agent": engine.active_agent,
     }
 
 
@@ -90,31 +89,6 @@ def run():
         port=settings.port,
         reload=False,
     )
-
-
-def ensure_adapter():
-    """Ensure a GGUF LoRA adapter exists at the given path, creating a null one if needed.
-
-    Usage: memory-ensure-adapter data/agents/francip/adapter.gguf
-    Called by llama-server run scripts before startup so --lora always has a valid file.
-    """
-    import sys as _sys
-
-    if len(_sys.argv) < 2:
-        print("Usage: memory-ensure-adapter <path-to-adapter.gguf>")
-        _sys.exit(1)
-
-    from pathlib import Path
-
-    path = Path(_sys.argv[1])
-    if path.exists():
-        print(f"Adapter exists: {path} ({path.stat().st_size} bytes)")
-        return
-
-    from .training.convert import create_null_adapter
-
-    create_null_adapter(path)
-    print(f"Created null adapter: {path} ({path.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":

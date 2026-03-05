@@ -14,12 +14,12 @@ if ! command -v uv &> /dev/null; then
     exit 1
 fi
 
-echo "Installing dependencies..."
+echo "Installing dependencies (includes mlx-lm for inference + training)..."
 uv sync
 
 echo ""
 echo "Setup complete! Embedding model downloads automatically on first run (~33MB)."
-echo "Make sure llama-server is running on port 2027 (see CLAUDE.md for the command)."
+echo "The mlx-lm model (~19.5GB) downloads on first server start."
 echo "----------------------------------------------------------------"
 echo "Run: ./run.sh                    # Start memory server on port 2090"
 echo "     uv run memory-server        # Same thing"

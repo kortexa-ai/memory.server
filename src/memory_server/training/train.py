@@ -3,8 +3,8 @@
 This module is invoked as a subprocess by the memory server:
     uv run python -m memory_server.training.train --agent-id avery
 
-It selects the appropriate training backend (MLX on macOS, unsloth on Linux)
-and runs the full pipeline: data prep → train → convert to GGUF.
+Runs the full pipeline: data prep → train. The training output (adapter_raw/adapters.safetensors)
+is the final artifact — mlx-lm loads it directly per-request, no conversion needed.
 """
 
 import argparse
@@ -33,7 +33,7 @@ async def run_training_pipeline(
     num_layers: int = 16,
     batch_size: int = 1,
 ) -> None:
-    """Full training pipeline: data prep → train → convert."""
+    """Full training pipeline: data prep → train."""
     from ..config import settings
 
     agent_dir = settings.data_dir / agent_id
@@ -43,7 +43,7 @@ async def run_training_pipeline(
     try:
         # Step 1: Data preparation
         _write_status(status_path, "preparing")
-        logger.info(f"Step 1/3: Preparing training data for agent '{agent_id}'")
+        logger.info(f"Step 1/2: Preparing training data for agent '{agent_id}'")
 
         from .data_prep import prepare_training_data
         data_path = await prepare_training_data(agent_id, server_url=server_url)
@@ -60,14 +60,11 @@ async def run_training_pipeline(
 
         # Step 2: Train
         _write_status(status_path, "training")
-        logger.info(f"Step 2/3: Training LoRA adapter ({platform.system()})")
+        logger.info(f"Step 2/2: Training LoRA adapter (macOS/MLX)")
 
-        if platform.system() == "Darwin":
-            from .train_mlx import run_training
-        else:
-            from .train_unsloth import run_training
+        from .train_mlx import run_training
 
-        adapter_dir = agent_dir / "adapter_raw"
+        adapter_dir = agent_dir / "adapter"
         adapter_dir.mkdir(parents=True, exist_ok=True)
 
         run_training(
@@ -79,20 +76,10 @@ async def run_training_pipeline(
             batch_size=batch_size,
         )
 
-        # Step 3: Convert to GGUF
-        _write_status(status_path, "converting")
-        logger.info("Step 3/3: Converting adapter to GGUF format")
-
-        from .convert import convert_to_gguf
-        gguf_path = agent_dir / "adapter.gguf"
-        convert_to_gguf(
-            adapter_dir=adapter_dir,
-            output_path=gguf_path,
-            source_platform="mlx" if platform.system() == "Darwin" else "hf",
-        )
-
+        # No conversion needed — mlx-lm loads adapters.safetensors directly
         _write_status(status_path, "complete")
-        logger.info(f"Training complete. Adapter at: {gguf_path}")
+        adapter_file = adapter_dir / "adapters.safetensors"
+        logger.info(f"Training complete. Adapter at: {adapter_file}")
 
     except Exception as e:
         _write_status(status_path, "failed", error=str(e))

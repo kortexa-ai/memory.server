@@ -6,4 +6,5 @@ build/
 .venv/
 .env
 data/agents/
+data/sessions/
 *.db

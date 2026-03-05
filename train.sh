@@ -6,9 +6,8 @@ cd "$(dirname "$0")"
 
 AGENT_ID="${1:-$(whoami)}"
 DATA_DIR="data/agents/${AGENT_ID}"
-ADAPTER_DIR="${DATA_DIR}/adapter_raw"
+ADAPTER_DIR="${DATA_DIR}/adapter"
 ADAPTER_DATA="${ADAPTER_DIR}/data"
-GGUF_PATH="${DATA_DIR}/adapter.gguf"
 
 # Training hyperparameters (override via environment)
 ITERS=${TRAIN_ITERS:-1000}
@@ -34,7 +33,7 @@ echo "  Batch: ${BATCH_SIZE}, Max seq: ${MAX_SEQ_LENGTH}"
 echo ""
 
 # Train
-uv run --extra train-mac python -m mlx_lm lora \
+uv run python -m mlx_lm lora \
     --model NexVeridian/Qwen3.5-35B-A3B-4bit \
     --train \
     --data "${ADAPTER_DATA}" \
@@ -49,16 +48,9 @@ uv run --extra train-mac python -m mlx_lm lora \
     --max-seq-length "${MAX_SEQ_LENGTH}" \
     --mask-prompt
 
-echo ""
-echo "Training complete. Converting to GGUF..."
-
-# Convert to GGUF
-uv run python -c "
-from pathlib import Path
-from memory_server.training.convert import convert_to_gguf
-convert_to_gguf(Path('${ADAPTER_DIR}'), Path('${GGUF_PATH}'))
-"
+# Clean up intermediate checkpoints
+rm -f "${ADAPTER_DIR}"/0*_adapters.safetensors
 
 echo ""
-echo "Done! Adapter at: ${GGUF_PATH} ($(du -h "${GGUF_PATH}" | cut -f1))"
-echo "Restart llama-server to pick it up."
+echo "Done! Adapter at: ${ADAPTER_DIR}/adapters.safetensors"
+echo "mlx-lm server will pick it up on next request — no restart needed."
