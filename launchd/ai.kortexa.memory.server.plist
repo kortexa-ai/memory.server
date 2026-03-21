@@ -14,10 +14,10 @@
 	<key>KeepAlive</key>
 	<false/>
 	<key>Label</key>
-	<string>ai.kortexa.memory</string>
+	<string>ai.kortexa.memory.server</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Users/francip/src/memory.server/launchd/kortexa-memory.sh</string>
+		<string>/Users/francip/src/memory.server/launchd/kortexa-memory-server.sh</string>
 	</array>
 	<key>RunAtLoad</key>
 	<false/>
