@@ -5,7 +5,7 @@ Runs on CPU — doesn't compete with Qwen for GPU memory.
 """
 
 import logging
-from typing import Generator
+from collections.abc import Iterable
 
 import numpy as np
 from fastembed import TextEmbedding
@@ -40,7 +40,7 @@ class Embedder:
     def embed_texts(self, texts: list[str]) -> list[np.ndarray]:
         """Embed a batch of texts (documents/memories)."""
         # fastembed returns a generator of numpy arrays
-        embeddings: Generator[np.ndarray, None, None] = self.model.embed(
+        embeddings: Iterable[np.ndarray] = self.model.embed(
             texts, batch_size=settings.embedding_batch_size
         )
         return [e.astype(np.float32) for e in embeddings]
@@ -73,7 +73,7 @@ def cosine_similarity_batch(query_vec: np.ndarray, candidate_matrix: np.ndarray)
     query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-10)
     norms = np.linalg.norm(candidate_matrix, axis=1, keepdims=True) + 1e-10
     candidate_norms = candidate_matrix / norms
-    return candidate_norms @ query_norm
+    return np.asarray(candidate_norms @ query_norm)
 
 
 def get_embedder() -> Embedder:

@@ -4,7 +4,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-
 # --- Request models ---
 
 
@@ -32,9 +31,7 @@ class IngestRequest(BaseModel):
     agent_id: str
     transcript: str = Field(..., description="Full session transcript")
     session_id: str | None = Field(None, description="Session identifier")
-    extract_knowledge: bool = Field(
-        True, description="Use LLM to extract key facts before storing"
-    )
+    extract_knowledge: bool = Field(True, description="Use LLM to extract key facts before storing")
 
 
 # --- Response models ---
@@ -103,9 +100,11 @@ class ReindexResponse(BaseModel):
 class TrainRequest(BaseModel):
     """Request to train a LoRA adapter for an agent."""
 
-    min_memories: int = Field(100, ge=10, description="Minimum memories required to start training")
-    max_iters: int = Field(200, ge=10, le=2000, description="Maximum training iterations")
-    lora_rank: int = Field(8, ge=2, le=64, description="LoRA adapter rank")
+    min_memories: int = Field(
+        default=100, ge=10, description="Minimum memories required to start training"
+    )
+    max_iters: int = Field(default=200, ge=10, le=2000, description="Maximum training iterations")
+    lora_rank: int = Field(default=8, ge=2, le=64, description="LoRA adapter rank")
 
 
 class TrainResponse(BaseModel):
